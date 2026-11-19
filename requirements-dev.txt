@@ -1,0 +1,13 @@
+# Development and build tooling.  Not needed to run cvd.
+#   pip install -r requirements-dev.txt
+
+# Stand-alone executable builds (see cvd.spec and .github/workflows/release.yml).
+# Pinned to 6.x: the 5.x PYZ() signature in cvd.spec differs.
+pyinstaller>=6.0,<7
+
+# The test suite uses unittest from the standard library, so pytest is optional.
+# It is listed because `pytest -q` gives nicer output and runs the same tests:
+pytest>=7.0
+
+# Style checks run in CI (informational, non-blocking).
+flake8>=6.0
