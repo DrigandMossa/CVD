@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.8 is the floor the code claims; pinned to 22.04 because setup-python
+          # no longer ships a 3.8 build for every newer runner image.
+          - {os: ubuntu-22.04, python: "3.8"}
+          - {os: ubuntu-latest, python: "3.11"}
+          - {os: ubuntu-latest, python: "3.13"}
+          - {os: windows-latest, python: "3.13"}
+          - {os: macos-latest, python: "3.13"}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Check the package imports and byte-compiles
+        run: python -m compileall -q cvd
+
+      - name: Unit tests
+        run: python -m unittest discover -v
+
+      - name: Smoke test the command-line modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m cvd --version
+          python -m cvd --list > /dev/null
+          python -m cvd --example-cnv demo.tsv
+          python -m cvd --cnv demo.tsv --out smoke > /dev/null
+          python -m cvd --cnv demo.tsv --design-from-cnv 1 --out smoke > /dev/null
+          python -m cvd --strategy car --gene CD19 --marker EGFP --out smoke > /dev/null
+          python -m cvd --strategy guide --gene KRAS --target GTTGGAGCTGATGGCGTAGG \
+            --out smoke > /dev/null
+          # --strict must fail on an oversized AAV cassette
+          if python -m cvd --vector aav --gene APC --strict --out smoke > /dev/null; then
+            echo "::error::--strict should have exited non-zero for an oversized AAV cassette"
+            exit 1
+          fi
+          test -f smoke/demo_aneuploidy.txt
+          test -f smoke/demo_arms.tsv
+          ls smoke/*.gb smoke/*.fasta smoke/*.svg > /dev/null
+          echo "smoke test produced $(ls smoke | wc -l) files"
+
+      - name: Check the installed console script
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install .
+          cvd --list > /dev/null
+          cvd --gene TP53 --out installed > /dev/null
+          test -f installed/pLV-EF1a_TP53.gb
+
+  lint:
+    name: style (informational)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install flake8
+      - name: Hard errors only (syntax, undefined names)
+        run: flake8 cvd tests --count --select=E9,F63,F7,F82 --show-source
+      - name: Full report (does not fail the build)
+        run: flake8 cvd tests --count --max-line-length=110 --statistics --exit-zero
