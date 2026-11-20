@@ -1,0 +1,12 @@
+# Runtime dependencies: none.
+#
+# cvd runs on the Python standard library alone (3.8+).  This file exists so that
+# `pip install -r requirements.txt` is a no-op rather than an error, and so the
+# "no dependencies" property is explicit rather than assumed.
+#
+# The graphical window needs tkinter, which is part of CPython rather than a pip
+# package.  It ships with the python.org installers for Windows and macOS; on
+# Debian/Ubuntu install it with:  sudo apt install python3-tk
+# Without tkinter every command-line mode still works.
+#
+# Development and build tooling lives in requirements-dev.txt.
