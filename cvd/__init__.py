@@ -13,6 +13,7 @@ regulatory authorization.
     python -m cvd --wizard             answer text prompts instead
     python -m cvd --list               show strategies, genes and parts
     python -m cvd --cnv segments.tsv   aneuploidy analysis and design suggestions
+    python -m cvd --rank ...           ranked, prebuilt vector options for an insert
 
 See README.md for the full option reference.
 """

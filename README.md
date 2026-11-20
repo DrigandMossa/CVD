@@ -9,6 +9,10 @@ It also reads copy-number segment files, calls arm-level gains and losses, compu
 aneuploidy score, and suggests designs based on what it finds — including immune-flagging
 payloads that do not depend on MHC-I.
 
+For any insert it can also generate **ranked, prebuilt vector options** (lentivirus and AAV,
+several promoter layouts). Each option is a complete design, modified where the part library
+allows, and every score, comparison and modification is explained.
+
 Python 3.8+, standard library only, no runtime dependencies. Run it straight from a
 checkout with `python -m cvd`, or `pip install .` to get a `cvd` command on your PATH.
 
@@ -27,6 +31,7 @@ checkout with `python -m cvd`, or `pip install .` to get a `cvd` command on your
   - [Graphical window](#graphical-window)
   - [Text wizard](#text-wizard)
   - [One-shot command line](#one-shot-command-line)
+- [Ranked vector options](#ranked-vector-options)
 - [Aneuploidy analysis](#aneuploidy-analysis)
 - [Supplying real sequences](#supplying-real-sequences)
 - [Outputs](#outputs)
@@ -59,6 +64,9 @@ python -m cvd --list
 # p53 replacement in AAV, ORF read from a FASTA file
 python -m cvd --vector aav --strategy rep --gene TP53 \
     --seq tp53_orf.fasta --promoter EF1a --out designs
+
+# rank the vector options for an insert and see why each ranks where it does
+python -m cvd --strategy rep --gene TP53 --setting "in vivo" --rank --explain 1
 
 # try the aneuploidy analysis on synthetic data
 python -m cvd --example-cnv demo.tsv
@@ -112,6 +120,8 @@ last keystroke.
 - Hover an arc on the map to see the element's name, position and length.
 - Select a table row to highlight the matching arc.
 - Double-click a placeholder row to paste a verified sequence for that element.
+- The **Vector options** tab ranks prebuilt options for the current insert; see
+  [Ranked vector options](#ranked-vector-options).
 - **Analysis → Aneuploidy analysis…** opens the CNV window; a suggestion there can be
   pushed straight into the designer, and the reason travels with it into the summary file.
 - **File → Export all files…**, or **Copy GenBank** / **Copy FASTA** for the clipboard.
@@ -139,6 +149,63 @@ python -m cvd --strategy guide --gene KRAS --guide-type shRNA \
 # fail the build if any check reports an error
 python -m cvd --strategy rep --gene TP53 --seq tp53.fasta --strict
 ```
+
+---
+
+## Ranked vector options
+
+```bash
+python -m cvd --strategy rep --gene TP53 --seq tp53.fasta --setting "in vivo" --rank
+python -m cvd ... --rank --explain 1          # why option 1, and how it compares
+python -m cvd ... --rank --explain all
+python -m cvd ... --rank --use-option 2       # build option 2 (GenBank, FASTA, map, summary)
+python -m cvd ... --rank --export-options     # every prebuilt option in its own folder
+python -m cvd ... --rank --no-optimize        # rank the plain layouts, without modifications
+```
+
+**Candidates.** Lentivirus and AAV, each with a strong constitutive promoter (EF1a + WPRE),
+a compact promoter without WPRE (EFS) and a tumor-selective promoter (Survivin + WPRE).
+CAR constructs add a T-cell promoter (MND); guides use their single U6 cassette.
+
+**Score.** Five criteria out of 100: packaging capacity (30), therapeutic setting (25),
+expression pattern (20), insert versus vector genome (15) and vector safety profile (10).
+An option whose cassette exceeds its vector's capacity scores 0 and ranks after every
+option that fits, closest fit first. The delivery setting comes from `--setting`
+(`in vivo` or `ex vivo`); CAR and modeling constructs are assumed ex vivo. Scores rank the
+generated options against each other using fixed rules — they are not predictions of titer
+or efficacy.
+
+**Explanations.** `--explain N` (and the window's click-through) shows why the option was
+suggested, what holds it back, the per-criterion breakdown, and one line for every other
+option saying why this one ranks above or below it. Those lines are generated from the
+actual score differences, so they cannot drift from the ranking.
+
+**Modifications.** Every option is a complete prebuilt vector, and the tool modifies it
+where the part library allows. Each change is rebuilt and measured on the design, and each
+is listed with its reason, its effect on the cassette size and any cost; changes that were
+considered and not made are listed too.
+
+| Modification | When |
+|---|---|
+| Kozak sequence added | it was switched off |
+| Marker linked by P2A instead of IRES or a second promoter | a marker is kept |
+| SV40 late polyA instead of bGH | AAV (about 100 bp smaller, equal or higher expression) |
+| C-terminal tag removed | therapeutic strategies |
+| Reporter or selection marker removed | therapeutic strategies in vivo, or any option that does not fit |
+| Short WPRE3 (247 bp) instead of WPRE (589 bp) | AAV above 75% of capacity |
+| WPRE removed | only when that is what makes the option fit |
+| Kanamycin instead of ampicillin selection | therapeutic strategies |
+
+The AAV figures come from one published comparison in neurons (Choi et al. 2014, *Mol
+Brain* 7:17): the short WPRE kept about 83% of the full element's expression, removing WPRE
+entirely gave about 29%, and a 49 bp synthetic polyA roughly halved expression, so it is
+listed as considered and not used. Other tissues may differ. Cryptic polyA and splice sites
+in a lentiviral insert are reported but not fixed, because that means editing your sequence.
+
+In the window, the **Vector options** tab shows a small map for each option; clicking a map
+opens the full prebuilt vector with every element. The breakdown has two tabs: *Why this
+ranking* and *Modifications*. **Use this option in the designer** carries the modifications
+into the designer and records them in the design basis of the summary file.
 
 ---
 
@@ -298,6 +365,7 @@ research-use-only note for `model`.
 --resistance R            AmpR or KanR
 --wpre / --no-wpre        force WPRE on or off (default: on except for plasmid)
 --no-kozak                leave out the Kozak sequence
+--short-wpre              use the 247 bp short WPRE (saves space in AAV)
 
 --hinge H                 CAR hinge/transmembrane domain
 --costim C                CAR costimulatory domain
@@ -316,6 +384,13 @@ research-use-only note for `model`.
 --design-from-cnv [N]     build the vector for suggestion N (default 1)
 --example-cnv FILE        write a synthetic example segment file and exit
 
+--rank                    rank vector options for the insert; write an options report
+--explain N|all           why option N (or all) was suggested and how it compares; implies --rank
+--use-option N            build ranked option N; implies --rank
+--setting S               delivery setting for ranking: "in vivo" or "ex vivo"
+--no-optimize             rank the plain layouts, without modifications
+--export-options          with --rank, write every prebuilt option to its own folder
+
 --strict                  exit 1 if any design check reports an error
 --version
 ```
@@ -328,7 +403,7 @@ research-use-only note for `model`.
 |---|---|
 | 0 | success |
 | 1 | `--strict` and at least one check reported an error |
-| 2 | bad input, unwritable output, or no window could be opened under `--gui` |
+| 2 | bad input (including a bad `--setting`, `--explain` or `--use-option`), unwritable output, or no window could be opened under `--gui` |
 | 130 | cancelled (Ctrl-C or EOF in the wizard) |
 
 ---
@@ -358,9 +433,17 @@ cvd/
   export/
     genbank.py  fasta.py  svgmap.py  summary.py   pure Design -> str
     files.py           writes every format to a folder
+  ranking/
+    tables.py          capacities, criteria weights, layouts, rule text (pure data)
+    model.py           InsertProfile, CriterionScore, Modification, VectorOption, RankingResult
+    scoring.py         insert profile and the per-criterion points
+    optimize.py        the modifications, each rebuilt and measured
+    engine.py          rank_vector_options: candidates, modify, score, order
+    explain.py         tables, explanations, reports, option-to-config
   cli/
     args.py            argument parsing and the parts catalogue
     wizard.py          interactive text prompts
+    rank.py            --rank, --explain, --use-option, --export-options
     run.py             mode dispatch and main()
   gui/
     __init__.py        launch_gui, the only place that knows tkinter may be missing
@@ -370,7 +453,8 @@ tests/               unittest suite, standard library only
 ```
 
 Dependencies point one way: `parts` imports nothing from the package, `seqops` and `model`
-import only `parts`, `design`/`cnv`/`export` sit on those, `cli` and `gui` sit on top.
+import only `parts`, `design`/`cnv`/`export` sit on those, `ranking` sits on `design`, and
+`cli` and `gui` sit on top.
 `gui` is the only package that imports tkinter, and only `gui/__init__.py` tolerates its
 absence -- so every command-line mode works on a machine with no Tk at all.
 
@@ -417,7 +501,9 @@ pytest -q                            # same tests, nicer output (pip install pyt
 ```
 
 The suite uses `unittest` from the standard library so it runs against a bare checkout.
-Tests that need a real tkinter skip themselves when it is missing.
+Tests that need a real tkinter skip themselves when it is missing. The Vector options tab is
+also tested through stand-in widgets (`tests/test_gui_options.py`), so that logic is covered
+on machines with no display and no Tk.
 
 `.github/workflows/ci.yml` runs the suite on Python 3.8, 3.11 and 3.13 across Linux,
 Windows and macOS, then smoke-tests every command-line mode end to end (including that
@@ -446,5 +532,11 @@ contents, so a new promoter will not break them.
 - **Shed ligands blunt flagging.** MICA, MICB and ULBP2 can be cleaved from the cell
   surface by ADAM10/ADAM17, and soluble ligand can desensitize NKG2D. Check surface
   retention in your model.
+- **Ranking scores are rule-based.** They compare the options generated here against each
+  other; they do not predict titer or efficacy. Only lentivirus and AAV are ranked —
+  adenovirus, dual-AAV and self-complementary AAV are not modeled, and element overrides
+  are ignored when ranking.
+- **Modification figures are from one study.** The short-WPRE and polyA numbers come from
+  AAV cassettes in neurons; check them in your tissue.
 - **No codon optimization, no primer design, no cloning strategy.** Export the GenBank
   file and take it to a dedicated tool for those.

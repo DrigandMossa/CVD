@@ -14,6 +14,7 @@ TUMOR_SELECTIVE = {"hTERT", "Survivin"}
 MARKERS = {"none": 0, "EGFP": 720, "mCherry": 711, "Puro": 600, "Neo": 795,
            "Blast": 399, "Hygro": 1026}
 POLYA = {"bGH": 225, "SV40": 122, "none": 0}
+WPRE_SHORT_LEN = 247          # shortened WPRE ("WPRE3"), Choi et al. 2014, Mol Brain 7:17
 RESISTANCE = {"AmpR": 861, "KanR": 816}
 TAGS = {"none": "",
         "FLAG3": "GACTACAAAGACCATGACGGTGATTATAAAGATCATGACATCGACTACAAGGATGACGATGACAAG",

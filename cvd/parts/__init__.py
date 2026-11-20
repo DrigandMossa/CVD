@@ -6,7 +6,7 @@ edited without pulling in the designer, the CNV analysis or the GUI.
 
 from .elements import (BUILT_IN_IDS, COSTIM, HINGES, KINDS, LINKS, MARKERS, P2A_SEQ, POLYA,
                        PROMOTERS, RESISTANCE, SGRNA_SCAFFOLD, SHRNA_LOOP, TAGS,
-                       TUMOR_SELECTIVE, VECTORS)
+                       TUMOR_SELECTIVE, VECTORS, WPRE_SHORT_LEN)
 from .enzymes import RESTRICTION_SITES
 from .genes import GENES
 from .genome import (ACROCENTRIC_P, ARM_GENES, ARM_ORDER, AUTOSOMES, BUILDS,
@@ -17,4 +17,4 @@ __all__ = ["ACROCENTRIC_P", "ARM_GENES", "ARM_ORDER", "AUTOSOMES", "BUILDS", "BU
            "COSTIM", "EXAMPLE_ARM_VALUES", "GENES", "HINGES", "IMMUNE_ARM_NOTES", "KINDS",
            "LINKS", "MARKERS", "N_SCORED_ARMS", "P2A_SEQ", "POLYA", "PROMOTERS",
            "RESISTANCE", "RESTRICTION_SITES", "SGRNA_SCAFFOLD", "SHRNA_LOOP", "STRATEGIES",
-           "TAGS", "TUMOR_SELECTIVE", "VECTORS"]
+           "TAGS", "TUMOR_SELECTIVE", "VECTORS", "WPRE_SHORT_LEN"]

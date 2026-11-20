@@ -50,6 +50,8 @@ jobs:
           test -f out/demo_aneuploidy.txt
           "$BIN" --gene TP53 --out out > /dev/null
           test -f out/pLV-EF1a_TP53.gb
+          "$BIN" --gene TP53 --setting "in vivo" --rank --out out > /dev/null
+          test -f out/TP53_rep_vector_options.txt
           echo "binary works: $("$BIN" --version)"
 
       - name: Name the artifact per platform

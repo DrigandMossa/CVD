@@ -70,6 +70,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--design-from-cnv", type=int, nargs="?", const=1, metavar="N",
                    help="after the analysis, build the vector for suggestion N (default 1)")
     p.add_argument("--example-cnv", metavar="FILE", help="write a synthetic example segment file and exit")
+    p.add_argument("--rank", action="store_true",
+                   help="generate and rank vector options for the insert, print the ranking and write an options report")
+    p.add_argument("--explain", metavar="N|all",
+                   help="print why ranked option N (or all) was suggested and how it compares; implies --rank")
+    p.add_argument("--use-option", type=int, metavar="N",
+                   help="build the vector for ranked option N; implies --rank")
+    p.add_argument("--no-optimize", action="store_true",
+                   help="rank the plain layouts without the suggested modifications")
+    p.add_argument("--export-options", action="store_true",
+                   help="with --rank, also write every prebuilt option (GenBank, FASTA, map, summary) to its own folder")
+    p.add_argument("--short-wpre", action="store_true",
+                   help="use the 247 bp short WPRE instead of the 589 bp WPRE (saves space in AAV)")
+    p.add_argument("--setting", default="",
+                   help="delivery setting used for ranking: 'in vivo' or 'ex vivo' (default: not specified)")
     p.add_argument("--name", default="", help="vector name (default: generated)")
     p.add_argument("--out", default=".", help="output folder (default: current folder)")
     p.add_argument("--strict", action="store_true", help="exit with status 1 if any design check reports an error")
@@ -87,6 +101,7 @@ def config_from_args(a: argparse.Namespace) -> Config:
     wpre = True if a.wpre else (False if a.no_wpre else None)
     return Config(vector=a.vector, strategy=a.strategy, gene=a.gene, variant=a.variant,
                   sequence=read_seq_arg(a.seq), promoter=a.promoter, marker=a.marker, link=a.link,
-                  tag=a.tag, polya=a.polya, resistance=a.resistance, wpre=wpre, kozak=not a.no_kozak,
+                  tag=a.tag, polya=a.polya, resistance=a.resistance, wpre=wpre, wpre_short=a.short_wpre,
+                  kozak=not a.no_kozak,
                   hinge=a.hinge, costim=a.costim, guide_type=a.guide_type,
                   target=read_seq_arg(a.target), name=a.name, overrides=overrides)
