@@ -14,6 +14,7 @@ from ..gui import launch_gui
 from ..model import Design, Recommendation
 from ..parts.genome import BUILDS
 from .args import build_parser, config_from_args, print_catalog
+from .rank import run_ranking, wants_ranking
 from .wizard import wizard
 
 def report(d: Design, paths: List[str]) -> None:
@@ -86,6 +87,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             cfg, out = config_from_args(args), args.out
             if cnv_rec is not None:
                 cfg = config_from_recommendation(cfg, cnv_rec, cnv_basis, keep_promoter=bool(args.promoter))
+            if wants_ranking(args):
+                status, cfg = run_ranking(args, cfg, out)
+                if status is not None:
+                    return status
         design = build_design(cfg)
         paths = write_outputs(design, out)
     except (ValueError, OSError) as exc:

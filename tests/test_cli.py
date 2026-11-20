@@ -210,6 +210,89 @@ class CnvMode(unittest.TestCase):
             self.assertTrue(err)
 
 
+class RankingModes(unittest.TestCase):
+    ARGS = ("--strategy", "rep", "--gene", "TP53", "--setting", "in vivo")
+
+    def run_in(self, *extra):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, err = run(*self.ARGS, *extra, "--out", folder)
+            files = sorted(os.listdir(folder))
+            report = ""
+            path = os.path.join(folder, "TP53_rep_vector_options.txt")
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as fh:
+                    report = fh.read()
+        return code, out, err, files, report
+
+    def test_rank_prints_the_table_and_writes_only_the_report(self):
+        code, out, err, files, report = self.run_in("--rank")
+        self.assertEqual((code, err, files), (0, "", ["TP53_rep_vector_options.txt"]))
+        self.assertIn("Rank Score", out)
+        self.assertIn("AAV", out)
+        self.assertIn("Use --explain", out)
+        self.assertIn("MODIFICATIONS TO OPTION 1", report.upper())
+
+    def test_explain_one_prints_the_reasoning_and_the_modifications(self):
+        code, out, _err, _files, _report = self.run_in("--explain", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("WHY IT WAS SUGGESTED", out)
+        self.assertIn("WHY IT RANKS ABOVE OR BELOW THE OTHER SUGGESTIONS", out)
+        self.assertIn("Modifications to option 1", out)
+        self.assertNotIn("Use --explain", out)
+
+    def test_explain_all_prints_every_option(self):
+        _code, out, _err, _files, _report = self.run_in("--explain", "all")
+        self.assertEqual(out.count("Modifications to option"), 6)
+
+    def test_use_option_builds_that_option_with_its_modifications(self):
+        code, out, _err, files, _report = self.run_in("--use-option", "1", "--marker", "EGFP")
+        self.assertEqual(code, 0)
+        self.assertIn("Building the vector for option 1", out)
+        self.assertIn("pAAV-EF1a_TP53.gb", files)
+        self.assertNotIn("EGFP", out.split("Building the vector")[1])      # removed in vivo
+
+    def test_bad_option_numbers_exit_two(self):
+        for extra in (("--use-option", "0"), ("--use-option", "7"), ("--explain", "9"),
+                      ("--explain", "x")):
+            code, _out, err, _files, _report = self.run_in(*extra)
+            self.assertEqual(code, 2, extra)
+            self.assertIn("Error:", err)
+
+    def test_bad_setting_exits_two(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, _out, err = run("--rank", "--setting", "on the moon", "--out", folder)
+        self.assertEqual(code, 2)
+        self.assertIn("Error:", err)
+
+    def test_no_optimize_ranks_the_plain_layouts(self):
+        code, out, _err, _files, report = self.run_in("--explain", "1", "--no-optimize")
+        self.assertEqual(code, 0)
+        self.assertIn("switched off", out)
+
+    def test_export_options_writes_every_prebuilt_option_to_its_own_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, _out, _err = run(*self.ARGS, "--rank", "--export-options", "--out", folder)
+            self.assertEqual(code, 0)
+            folders = sorted(d for d in os.listdir(folder) if d.startswith("option"))
+            self.assertEqual(folders, ["option%d" % i for i in range(1, 7)])
+            for d in folders:
+                self.assertEqual(len(os.listdir(os.path.join(folder, d))), 4)
+
+    def test_short_wpre_flag_reaches_the_design(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, _err = run("--vector", "aav", "--gene", "TP53", "--short-wpre", "--out", folder)
+        self.assertEqual(code, 0)
+        self.assertIn("247 bp", out)
+
+    def test_ranking_combines_with_a_cnv_suggestion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            demo = os.path.join(folder, "demo.tsv")
+            run("--example-cnv", demo)
+            code, out, _err = run("--cnv", demo, "--design-from-cnv", "2", "--rank", "--out", folder)
+        self.assertEqual(code, 0)
+        self.assertIn("Rank Score", out)
+
+
 class Version(unittest.TestCase):
     def test_version_flag_reports_the_package_version(self):
         from cvd import __version__

@@ -1,11 +1,11 @@
-"""Main window: options on the left, live map, element table and checks on the right."""
+"""Main window: options on the left; design and ranked vector options on the right."""
 
 import dataclasses
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from ..design.builder import build_design
 from ..export.fasta import to_fasta
@@ -15,6 +15,9 @@ from ..model import Config, Design, Feature, Recommendation
 from ..parts.elements import (BUILT_IN_IDS, COSTIM, HINGES, KINDS, LINKS, MARKERS, POLYA,
                               PROMOTERS, RESISTANCE, TAGS)
 from ..parts.strategies import STRATEGIES
+from ..ranking import (RankingResult, SETTING_CHOICES, VECTOR_SHORT, VectorOption, basis_for_option,
+                       explain_option, explain_option_parts, fit_text, modification_parts,
+                       options_report, parse_setting, rank_vector_options, ranking_summary)
 from ..seqops import clean_sequence
 from ..version import __version__
 from .aneuploidy import AneuploidyWindow
@@ -31,6 +34,20 @@ def element_note(f: Feature, has_insert: bool, has_target: bool) -> str:
     if f.id in BUILT_IN_IDS:
         return "built in"
     return "placeholder (N), double-click to paste"
+
+
+def draw_ring(canvas, d: Design, cx: float, cy: float, radius: float, band: float, tags: Tuple[str, ...] = ()):
+    """Draw a circular map of a design and return [(feature, canvas item)]. Used for the big map and thumbnails."""
+    box = (cx - radius, cy - radius, cx + radius, cy + radius)
+    canvas.create_oval(*box, outline="#d3dde5", width=band + 4, tags=tags)
+    items = []
+    for f in d.features:
+        start = 360.0 * (f.start - 1) / d.total
+        extent = max(360.0 * f.length / d.total, 1.5)
+        item = canvas.create_arc(*box, start=90 - start, extent=-extent, style="arc", outline=KINDS[f.kind][0],
+                                 width=band, tags=tags)
+        items.append((f, item))
+    return items
 
 
 class VectorDesignerApp:
@@ -65,6 +82,8 @@ class VectorDesignerApp:
         self.has_insert = False
         self.has_target = False
         self.basis = ""
+        self.option_basis = ""
+        self.ranking: Optional[RankingResult] = None
         self.status = tk.StringVar(value="")
         self._make_vars()
         self._make_menu()
@@ -81,11 +100,14 @@ class VectorDesignerApp:
         first = STRATEGIES["rep"]
         names = dict(vector="lenti", strategy=first["name"], gene="", variant="", promoter=first["promoter"],
                      tag="none", marker=first["marker"], link="P2A", polya="SV40", resistance="AmpR",
-                     hinge="CD8a hinge/TM", costim="4-1BB", guide_type="shRNA", target="", name="")
+                     hinge="CD8a hinge/TM", costim="4-1BB", guide_type="shRNA", target="", name="",
+                     setting=SETTING_CHOICES[0])
         self.var = {k: tk.StringVar(value=v) for k, v in names.items()}
         self.wpre = tk.BooleanVar(value=True)
+        self.wpre_short = tk.BooleanVar(value=False)
+        self.optimize = tk.BooleanVar(value=True)
         self.kozak = tk.BooleanVar(value=True)
-        for var in list(self.var.values()) + [self.wpre, self.kozak]:
+        for var in list(self.var.values()) + [self.wpre, self.wpre_short, self.optimize, self.kozak]:
             var.trace_add("write", self.schedule)
 
     def strategy_key(self) -> str:
@@ -98,9 +120,10 @@ class VectorDesignerApp:
                       variant=v["variant"].get(), sequence=self.insert_box.get("1.0", "end"),
                       promoter=v["promoter"].get(), marker=v["marker"].get(), link=v["link"].get(),
                       tag=v["tag"].get(), polya=v["polya"].get(), resistance=v["resistance"].get(),
-                      wpre=self.wpre.get(), kozak=self.kozak.get(), hinge=v["hinge"].get(),
+                      wpre=self.wpre.get(), wpre_short=self.wpre_short.get(), kozak=self.kozak.get(), hinge=v["hinge"].get(),
                       costim=v["costim"].get(), guide_type=v["guide_type"].get(),
-                      target=v["target"].get(), name=v["name"].get(), overrides={}, basis=self.basis)
+                      target=v["target"].get(), name=v["name"].get(), overrides={},
+                      basis="\n".join(x for x in (self.basis, self.option_basis) if x))
 
     # ---- widgets -------------------------------------------------------
     def _make_menu(self) -> None:
@@ -227,6 +250,8 @@ class VectorDesignerApp:
         ttk.Checkbutton(box, text="Include WPRE", variable=self.wpre).grid(row=3, column=0, sticky="w", padx=3, pady=2)
         self.kozak_check = ttk.Checkbutton(box, text="Add Kozak (GCCACC)", variable=self.kozak)
         self.kozak_check.grid(row=3, column=1, sticky="w", padx=3, pady=2)
+        ttk.Checkbutton(box, text="Short WPRE (247 bp, for AAV)", variable=self.wpre_short
+                        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=3, pady=2)
 
         box = self._section(form, 6, "Vector name")
         self._field(box, 0, 0, "Leave empty for a generated name", self.var["name"], span=2)
@@ -235,8 +260,16 @@ class VectorDesignerApp:
                   ).grid(row=7, column=0, sticky="w", pady=(0, 6))
 
     def _make_right(self) -> None:
-        right = ttk.Frame(self.root, padding=(0, 10, 12, 0))
-        right.grid(row=0, column=1, sticky="nsew")
+        outer = ttk.Frame(self.root, padding=(0, 10, 12, 0))
+        outer.grid(row=0, column=1, sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        self.tabs = ttk.Notebook(outer)
+        self.tabs.grid(row=0, column=0, sticky="nsew")
+        right = self.design_tab = ttk.Frame(self.tabs, padding=(0, 8, 0, 0))
+        self.options_tab = ttk.Frame(self.tabs, padding=(10, 8, 10, 8))
+        self.tabs.add(right, text="Design")
+        self.tabs.add(self.options_tab, text="Vector options")
         right.columnconfigure(1, weight=1)
         right.rowconfigure(0, weight=3)
         right.rowconfigure(1, weight=2)
@@ -281,9 +314,306 @@ class VectorDesignerApp:
         ttk.Button(buttons, text="Aneuploidy analysis...", command=self.open_aneuploidy).pack(side="left", padx=6)
         ttk.Label(buttons, text="Double-click a table row to paste a verified sequence for that element.",
                   foreground="#587083").pack(side="right")
+        self._make_options_tab(self.options_tab)
 
-    # ---- events --------------------------------------------------------
+    THUMB_W, THUMB_H = 150, 132
+
+    def _make_options_tab(self, tab) -> None:
+        """Ranked, prebuilt vector options for the current insert, with the reasoning and modifications for each."""
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(4, weight=2)
+        tab.rowconfigure(5, weight=3)
+        top = ttk.Frame(tab)
+        top.grid(row=0, column=0, sticky="ew")
+        ttk.Label(top, text="Delivery setting").pack(side="left")
+        ttk.Combobox(top, textvariable=self.var["setting"], values=SETTING_CHOICES, state="readonly",
+                     width=14).pack(side="left", padx=6)
+        ttk.Checkbutton(top, text="Apply suggested modifications", variable=self.optimize).pack(side="left", padx=10)
+        ttk.Label(top, foreground="#587083", text="Each option is a complete prebuilt vector.").pack(side="left")
+        self.insert_info = ttk.Label(tab, wraplength=700, justify="left", padding=(0, 8, 0, 6))
+        self.insert_info.grid(row=1, column=0, sticky="ew")
+
+        strip = ttk.Frame(tab)
+        strip.grid(row=2, column=0, sticky="ew")
+        strip.columnconfigure(0, weight=1)
+        self.gallery = tk.Canvas(strip, height=self.THUMB_H, background="white", highlightthickness=1,
+                                 highlightbackground="#d3dde5")
+        gsb = ttk.Scrollbar(strip, orient="horizontal", command=self.gallery.xview)
+        self.gallery.configure(xscrollcommand=gsb.set)
+        self.gallery.grid(row=0, column=0, sticky="ew")
+        gsb.grid(row=1, column=0, sticky="ew")
+        ttk.Label(tab, foreground="#587083", text="Click a small map to open the full prebuilt vector."
+                  ).grid(row=3, column=0, sticky="w", pady=(2, 4))
+
+        listing = ttk.Frame(tab)
+        listing.grid(row=4, column=0, sticky="nsew")
+        listing.columnconfigure(0, weight=1)
+        listing.rowconfigure(0, weight=1)
+        self.opt_tree = ttk.Treeview(listing, columns=("score", "size", "fit", "mods"), height=5, selectmode="browse")
+        for col, text, width, anchor in (("#0", "Option (click one to see the reasoning)", 330, "w"),
+                                         ("score", "Applicability", 90, "e"), ("size", "Cassette", 80, "e"),
+                                         ("fit", "Capacity", 110, "w"), ("mods", "Changes", 60, "e")):
+            self.opt_tree.heading(col, text=text)
+            self.opt_tree.column(col, width=width, anchor=anchor, stretch=(col == "#0"))
+        self.opt_tree.tag_configure("nofit", foreground="#b3261e")
+        osb = ttk.Scrollbar(listing, orient="vertical", command=self.opt_tree.yview)
+        self.opt_tree.configure(yscrollcommand=osb.set)
+        self.opt_tree.grid(row=0, column=0, sticky="nsew")
+        osb.grid(row=0, column=1, sticky="ns")
+        self.opt_tree.bind("<<TreeviewSelect>>", self.on_option_select)
+
+        self.detail = ttk.Notebook(tab)
+        self.detail.grid(row=5, column=0, sticky="nsew", pady=(8, 0))
+        self.why_box = self._reason_box(self.detail, "Why this ranking")
+        self.mod_box = self._reason_box(self.detail, "Modifications")
+        self.mods_frame = self._last_reason_frame
+
+        buttons = ttk.Frame(tab)
+        buttons.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(buttons, text="Open the prebuilt vector", command=self.expand_current).pack(side="left")
+        ttk.Button(buttons, text="Use this option in the designer", command=self.use_option).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Copy explanation", command=self.copy_option).pack(side="left")
+        ttk.Button(buttons, text="Save all options...", command=self.save_options).pack(side="left", padx=6)
+
+    def _reason_box(self, notebook, title: str):
+        """A read-only, scrollable, tagged Text on its own notebook tab."""
+        frame = ttk.Frame(notebook, padding=(4, 4, 4, 4))
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        notebook.add(frame, text=title)
+        box = tk.Text(frame, height=12, wrap="word", state="disabled", relief="flat", padx=8, pady=6)
+        sb = ttk.Scrollbar(frame, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=sb.set)
+        box.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        for tag, style in (("title", dict(font=self.bold, spacing3=4)),
+                           ("head", dict(font=self.bold, spacing1=10, spacing3=2)),
+                           ("good", dict(foreground="#0b6b3a", font=self.bold, spacing1=6)),
+                           ("bad", dict(foreground="#b3261e")), ("mute", dict(foreground="#587083"))):
+            box.tag_configure(tag, **style)
+        self._last_reason_frame = frame
+        return box
+
+    @staticmethod
+    def _fill_box(box, parts) -> None:
+        box.configure(state="normal")
+        box.delete("1.0", "end")
+        for tag, text in parts:
+            box.insert("end", text + "\n", (tag,))
+        box.configure(state="disabled")
+        box.yview_moveto(0)
+
+    def update_options(self, cfg: Config) -> None:
+        """Re-rank the vector options for the current insert and list them."""
+        try:
+            self.ranking = rank_vector_options(cfg, parse_setting(self.var["setting"].get()), self.optimize.get())
+        except ValueError as exc:
+            self.ranking = None
+            self.opt_tree.delete(*self.opt_tree.get_children())
+            self.gallery.delete("all")
+            self.insert_info.configure(text="Could not rank options: %s" % exc)
+            return
+        res = self.ranking
+        previous = self.opt_tree.selection()
+        self.opt_tree.delete(*self.opt_tree.get_children())
+        for o in res.options:
+            self.opt_tree.insert("", "end", iid=o.key, text="%d. %s" % (o.rank, o.title),
+                                 values=(o.applicability, "%s bp" % format(o.cassette, ","), fit_text(o),
+                                         len(o.applied_mods)),
+                                 tags=("nofit",) if not o.feasible else ())
+        self.insert_info.configure(text=ranking_summary(res))
+        self.draw_gallery()
+        keep = previous[0] if previous and self.opt_tree.exists(previous[0]) else res.options[0].key
+        self.opt_tree.selection_set(keep)
+        self.opt_tree.focus(keep)
+        self.show_option(keep)
+
+    def draw_gallery(self) -> None:
+        """One small map per prebuilt option; clicking a map opens the full vector."""
+        g, w, h = self.gallery, self.THUMB_W, self.THUMB_H
+        g.delete("all")
+        for i, o in enumerate(self.ranking.options):
+            cx, tag = i * w + w / 2, "cell%d" % i
+            g.create_rectangle(i * w + 3, 3, (i + 1) * w - 3, h - 3, fill="white", outline="#d3dde5",
+                               tags=(tag, "frame:" + o.key))
+            draw_ring(g, o.design, cx, 50, 34, 9, tags=(tag,))
+            g.create_text(cx, 50, text="#%d" % o.rank, font=self.bold, fill="#14202b", tags=(tag,))
+            promoter = o.config.promoter or "U6"
+            g.create_text(cx, 100, text="%s, %s" % (VECTOR_SHORT[o.vector], promoter), fill="#14202b", tags=(tag,))
+            changes = len(o.applied_mods)
+            g.create_text(cx, 116, text="%d/100, %d change%s" % (o.applicability, changes, "" if changes == 1 else "s"),
+                          fill="#587083" if o.feasible else "#b3261e", tags=(tag,))
+            g.tag_bind(tag, "<Button-1>", lambda _e, k=o.key: self.on_thumb_click(k))
+        g.configure(scrollregion=(0, 0, len(self.ranking.options) * w, h))
+
+    def highlight_thumb(self, key: str) -> None:
+        for o in self.ranking.options:
+            self.gallery.itemconfigure("frame:" + o.key, outline="#1f6fd0" if o.key == key else "#d3dde5",
+                                       width=3 if o.key == key else 1)
+
+    def on_thumb_click(self, key: str) -> None:
+        if self.ranking is None or not self.opt_tree.exists(key):
+            return
+        self.opt_tree.selection_set(key)
+        self.opt_tree.focus(key)
+        self.show_option(key)
+        self.expand_option(key)
+
+    def on_option_select(self, _event=None) -> None:
+        selected = self.opt_tree.selection()
+        if selected:
+            self.show_option(selected[0])
+
+    def current_option(self) -> Optional[VectorOption]:
+        selected = self.opt_tree.selection()
+        if self.ranking is None or not selected:
+            return None
+        return next((o for o in self.ranking.options if o.key == selected[0]), None)
+
+    def show_option(self, key: str) -> None:
+        """Write the reasoning and the modifications for one option into their tabs."""
+        res = self.ranking
+        if res is None:
+            return
+        index = next((i for i, o in enumerate(res.options) if o.key == key), None)
+        if index is None:
+            return
+        self._fill_box(self.why_box, explain_option_parts(res, index))
+        self._fill_box(self.mod_box, modification_parts(res, index))
+        count = len(res.options[index].applied_mods)
+        self.detail.tab(self.mods_frame, text="Modifications (%d)" % count)
+        self.highlight_thumb(key)
+
+    def expand_current(self) -> None:
+        option = self.current_option()
+        if option is None:
+            messagebox.showinfo("Choose an option", "Select a vector option in the list first.")
+            return
+        self.expand_option(option.key)
+
+    def expand_option(self, key: str) -> None:
+        """The full prebuilt vector for one option: large map, every element, and the changes made to it."""
+        option = next((o for o in self.ranking.options if o.key == key), None)
+        if option is None:
+            return
+        d = option.design
+        top = tk.Toplevel(self.root)
+        top.title("Prebuilt vector %d: %s" % (option.rank, d.name))
+        top.transient(self.root)
+        top.columnconfigure(1, weight=1)
+        top.rowconfigure(0, weight=1)
+        size = 440
+        canvas = tk.Canvas(top, width=size, height=size, background="white", highlightthickness=0)
+        canvas.grid(row=0, column=0, padx=10, pady=10)
+        info = ttk.Label(top, padding=(10, 0, 10, 4), wraplength=440, justify="left")
+        info.grid(row=1, column=0, sticky="w")
+        arcs: Dict[str, object] = {}
+        for f, item in draw_ring(canvas, d, size / 2, size / 2, 170, 30):
+            arcs[f.id] = item
+            canvas.tag_bind(item, "<Enter>", lambda _e, f=f: info.configure(
+                text="%s   %d..%d   %d bp" % (f.name, f.start, f.end, f.length)))
+            canvas.tag_bind(item, "<Leave>", lambda _e: info.configure(text=self.expanded_summary(option)))
+        canvas.create_line(size / 2, 14, size / 2, 32, fill="#14202b", width=2)
+        canvas.create_text(size / 2, size / 2 - 16, text=d.name, width=230, justify="center", font=self.bold,
+                           fill="#14202b")
+        canvas.create_text(size / 2, size / 2 + 22, text="%s bp" % format(d.total, ","), fill="#587083")
+        info.configure(text=self.expanded_summary(option))
+
+        right = ttk.Frame(top, padding=(0, 10, 10, 4))
+        right.grid(row=0, column=1, rowspan=2, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(right, columns=("pos", "len"), height=14, selectmode="browse")
+        tree.heading("#0", text="Element")
+        tree.heading("pos", text="Position")
+        tree.heading("len", text="bp")
+        tree.column("#0", width=200)
+        tree.column("pos", width=110, anchor="e")
+        tree.column("len", width=60, anchor="e")
+        for f in d.features:
+            tree.insert("", "end", iid=f.id, text=f.name, image=self.swatch(f.kind),
+                        values=("%d..%d" % (f.start, f.end), f.length))
+
+        def highlight(_event=None) -> None:
+            for item in arcs.values():
+                canvas.itemconfigure(item, width=30)
+            picked = tree.selection()
+            if picked and picked[0] in arcs:
+                canvas.itemconfigure(arcs[picked[0]], width=46)
+        tree.bind("<<TreeviewSelect>>", highlight)
+        tree.grid(row=0, column=0, sticky="nsew")
+        buttons = ttk.Frame(right)
+        buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
+        def use_it() -> None:
+            top.destroy()
+            self.opt_tree.selection_set(option.key)
+            self.use_option()
+        ttk.Button(buttons, text="Use this option in the designer", command=use_it).pack(side="left")
+        ttk.Button(buttons, text="Close", command=top.destroy).pack(side="right")
+
+    @staticmethod
+    def expanded_summary(option: VectorOption) -> str:
+        done = option.applied_mods
+        return "%s. Cassette %s bp (%s). %s" % (
+            option.title, format(option.cassette, ","), fit_text(option),
+            "%d modification%s applied; see the Modifications tab." % (len(done), "" if len(done) == 1 else "s")
+            if done else "No modification was needed.")
+
+    def use_option(self) -> None:
+        option = self.current_option()
+        if option is None:
+            messagebox.showinfo("Choose an option", "Select a vector option in the list first.")
+            return
+        if not option.feasible and not messagebox.askyesno(
+                "Option does not fit", "This option's cassette is larger than its vector can package. Use it anyway?"):
+            return
+        self.apply_option(option)
+
+    def apply_option(self, option: VectorOption) -> None:
+        """Set the designer to a prebuilt option, with its modifications, and show the design."""
+        oc = option.config
+        self.var["vector"].set(option.vector)
+        self.on_vector()
+        for name, value in (("promoter", oc.promoter), ("marker", oc.marker), ("link", oc.link), ("tag", oc.tag),
+                            ("polya", oc.polya), ("resistance", oc.resistance)):
+            if value is not None:
+                self.var[name].set(value)
+        if oc.wpre is not None:
+            self.wpre.set(oc.wpre)
+        self.wpre_short.set(oc.wpre_short)
+        self.kozak.set(oc.kozak)
+        self.option_basis = basis_for_option(self.ranking, option)
+        self.schedule()
+        self.set_status("Designer set to option %d: %s (%d modification%s)." % (
+            option.rank, option.title, len(option.applied_mods), "" if len(option.applied_mods) == 1 else "s"))
+        self.tabs.select(self.design_tab)
+
+    def copy_option(self) -> None:
+        option = self.current_option()
+        if option is None:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(explain_option(self.ranking, self.ranking.options.index(option)))
+        self.set_status("Copied the explanation and modifications for option %d to the clipboard." % option.rank)
+
+    def save_options(self) -> None:
+        if self.ranking is None:
+            return
+        path = filedialog.asksaveasfilename(title="Save all vector options", defaultextension=".txt",
+                                            initialfile="vector_options.txt")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(options_report(self.ranking))
+        except OSError as exc:
+            messagebox.showerror("Could not write the file", str(exc))
+            return
+        self.set_status("Saved the options report to %s" % path)
+
     def on_vector(self) -> None:
+        self.option_basis = ""            # a manual change means the ranked option no longer describes the design
         vec = self.var["vector"].get()
         self.wpre.set(vec != "plasmid")
         self.var["polya"].set("bGH" if vec == "plasmid" else "SV40")
@@ -342,6 +672,7 @@ class VectorDesignerApp:
         self.draw_map()
         self.fill_tree()
         self.fill_messages()
+        self.update_options(cfg)
 
     def set_status(self, text: str) -> None:
         self.status.set(text)
@@ -350,13 +681,7 @@ class VectorDesignerApp:
         c, d, size = self.canvas, self.design, self.MAP_SIZE
         c.delete("all")
         self.arcs = {}
-        box = (size / 2 - 140, size / 2 - 140, size / 2 + 140, size / 2 + 140)
-        c.create_oval(*box, outline="#d3dde5", width=30)
-        for f in d.features:
-            start = 360.0 * (f.start - 1) / d.total
-            extent = max(360.0 * f.length / d.total, 1.5)
-            item = c.create_arc(*box, start=90 - start, extent=-extent, style="arc",
-                                outline=KINDS[f.kind][0], width=26)
+        for f, item in draw_ring(c, d, size / 2, size / 2, 140, 26):
             self.arcs[f.id] = item
             c.tag_bind(item, "<Enter>", lambda _e, f=f: self.set_status(
                 "%s   %d..%d   %d bp" % (f.name, f.start, f.end, f.length)))
@@ -493,6 +818,7 @@ class VectorDesignerApp:
     def on_strategy_chosen(self) -> None:
         """The user picked a strategy by hand, so any earlier aneuploidy-based reason no longer applies."""
         self.basis = ""
+        self.option_basis = ""
         self.on_strategy()
 
     def open_aneuploidy(self) -> None:
@@ -506,6 +832,7 @@ class VectorDesignerApp:
         if rec.promoter:
             self.var["promoter"].set(rec.promoter)
         self.basis = basis
+        self.option_basis = ""
         self.schedule()
         self.set_status("Designer set from the aneuploidy analysis: %s (%s)." % (rec.title, rec.gene))
         self.root.lift()

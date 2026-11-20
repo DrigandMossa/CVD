@@ -18,6 +18,7 @@ class Config:
     polya: Optional[str] = None
     resistance: str = "AmpR"
     wpre: Optional[bool] = None
+    wpre_short: bool = False      # 247 bp WPRE3 instead of the 589 bp WPRE (saves space in AAV)
     kozak: bool = True
     hinge: str = "CD8a hinge/TM"
     costim: str = "4-1BB"

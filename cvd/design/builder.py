@@ -6,7 +6,7 @@ from typing import List, Tuple
 from ..model import Config, Design, Feature
 from ..parts.elements import (BUILT_IN_IDS, COSTIM, HINGES, LINKS, MARKERS, P2A_SEQ, POLYA,
                               PROMOTERS, RESISTANCE, SGRNA_SCAFFOLD, SHRNA_LOOP, TAGS,
-                              TUMOR_SELECTIVE, VECTORS)
+                              TUMOR_SELECTIVE, VECTORS, WPRE_SHORT_LEN)
 from ..parts.genes import GENES
 from ..parts.strategies import STRATEGIES
 from ..seqops import clean_sequence, gc_percent, pick, revcomp
@@ -93,7 +93,10 @@ def build_design(cfg: Config) -> Design:
         if p2a:
             add("stop", "Stop (TAA)", "stop", 3, "TAA")
     if wpre and not is_guide:
-        add("wpre", "WPRE", "reg", 589)
+        if cfg.wpre_short:
+            add("wpre", "WPRE3 (short)", "reg", WPRE_SHORT_LEN)
+        else:
+            add("wpre", "WPRE", "reg", 589)
     if polya != "none" and not is_guide:
         add("pa", polya + " polyA", "polya", POLYA[polya])
     if marker != "none" and link.startswith("separate"):

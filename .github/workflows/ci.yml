@@ -49,6 +49,10 @@ jobs:
           python -m cvd --strategy car --gene CD19 --marker EGFP --out smoke > /dev/null
           python -m cvd --strategy guide --gene KRAS --target GTTGGAGCTGATGGCGTAGG \
             --out smoke > /dev/null
+          python -m cvd --strategy rep --gene TP53 --setting "in vivo" --rank --explain 1 \
+            --export-options --out smoke > /dev/null
+          python -m cvd --strategy rep --gene TP53 --setting "in vivo" --use-option 1 \
+            --out smoke > /dev/null
           # --strict must fail on an oversized AAV cassette
           if python -m cvd --vector aav --gene APC --strict --out smoke > /dev/null; then
             echo "::error::--strict should have exited non-zero for an oversized AAV cassette"
@@ -56,6 +60,8 @@ jobs:
           fi
           test -f smoke/demo_aneuploidy.txt
           test -f smoke/demo_arms.tsv
+          test -f smoke/TP53_rep_vector_options.txt
+          test -f smoke/option1/pAAV-EF1a_TP53.gb
           ls smoke/*.gb smoke/*.fasta smoke/*.svg > /dev/null
           echo "smoke test produced $(ls smoke | wc -l) files"
 
