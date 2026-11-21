@@ -475,6 +475,20 @@ Carried over deliberately rather than changed in the same pass as the split:
 - Design-check messages are `(level, text)` tuples ordered by index into a literal tuple,
   with the level-to-label mapping repeated in the GUI, the terminal report and the summary.
 
+### Single-file runner
+
+`cvd.pyz` is the whole package in one runnable file (built with the standard library's
+`zipapp`; it still needs Python 3.8+ installed). On Linux and macOS run `./cvd.pyz`; anywhere
+run `python cvd.pyz`; on Windows `cvd.bat` calls it for you. It takes the same options as
+`python -m cvd`. Rebuild it with:
+
+```bash
+python -c "import zipapp; zipapp.create_archive('app', 'cvd.pyz', interpreter='/usr/bin/env python3', compressed=True)"
+```
+
+where `app/` holds a copy of the `cvd` folder and a `__main__.py` that calls `cvd.cli.run.main()`.
+It is not a native executable: that is what the next section builds.
+
 ### Building a stand-alone executable
 
 ```bash
