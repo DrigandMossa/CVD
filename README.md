@@ -16,6 +16,8 @@ allows, and every score, comparison and modification is explained.
 Python 3.8+, standard library only, no runtime dependencies. Run it straight from a
 checkout with `python -m cvd`, or `pip install .` to get a `cvd` command on your PATH.
 
+New to this? Read the [plain-language guide](docs/HOW_TO_USE_SIMPLE.md).
+
 > **Research use.** Library elements use typical lengths and are written as runs of `N`
 > until you supply verified sequences. Producing virus requires institutional biosafety
 > approval; a clinical gene therapy product requires GMP manufacturing, preclinical safety
