@@ -16,6 +16,8 @@ allows, and every score, comparison and modification is explained.
 Python 3.8+, standard library only, no runtime dependencies. Run it straight from a
 checkout with `python -m cvd`, or `pip install .` to get a `cvd` command on your PATH.
 
+New to this? Read the [plain-language guide](docs/HOW_TO_USE_SIMPLE.md). Want runnable examples? See [EXAMPLES.md](EXAMPLES.md); the tests run every one.
+
 > **Research use.** Library elements use typical lengths and are written as runs of `N`
 > until you supply verified sequences. Producing virus requires institutional biosafety
 > approval; a clinical gene therapy product requires GMP manufacturing, preclinical safety
@@ -33,6 +35,7 @@ checkout with `python -m cvd`, or `pip install .` to get a `cvd` command on your
   - [One-shot command line](#one-shot-command-line)
 - [Ranked vector options](#ranked-vector-options)
 - [Aneuploidy analysis](#aneuploidy-analysis)
+- [Worked example: a real tumor from open data](#worked-example-a-real-tumor-from-open-data)
 - [Supplying real sequences](#supplying-real-sequences)
 - [Outputs](#outputs)
 - [Parts library](#parts-library)
@@ -247,6 +250,77 @@ type rather than treating the bin as meaningful on its own.
 - arm loss over a tumor suppressor ≤3 kb → replacement; arm gain over an oncogene → knockdown
 
 These are not predictions of response.
+
+---
+
+## Worked example: a real tumor from open data
+
+This runs the whole pipeline on a real, openly available tumor: TCGA-W5-AA2X-01, a perihilar
+cholangiocarcinoma (bile duct cancer), primary tumor, grade 4. The segments come from the
+cBioPortal PanCancer Atlas study `chol_tcga_pan_can_atlas_2018` (hg19, log2 ratios) and are in
+[`examples/tcga_chol_W5-AA2X-01.seg`](examples/tcga_chol_W5-AA2X-01.seg). TCGA labels these data
+preliminary, under the Broad GDAC TCGA Analysis Pipeline License. I chose this sample because
+it had the highest aneuploidy score of the 36 tumors in that study.
+
+**1. Analyze the tumor.**
+
+```bash
+python -m cvd --cnv examples/tcga_chol_W5-AA2X-01.seg --build hg19 --out example
+```
+
+The program reports an aneuploidy score of **27 of 39** arms (16 gained, 11 lost), with 76% of
+the genome gained or lost. The published TCGA score for this sample is 29. Across all 36 tumors
+in the study the two scores correlate at 0.76, with a mean difference of about 3 arms, because
+the methods use slightly different cut-offs. Notable arms:
+
+| Finding | Why it matters |
+|---|---|
+| 3q gained (carries CD47) | CD47 is the don't-eat-me signal for macrophages |
+| 12p gained (KRAS), 7q gained (BRAF) | possible oncogene dosage; confirm that they are dependencies |
+| 3p lost (VHL), 19p lost (STK11) | tumor suppressors that could be replaced |
+| 6p gained | the HLA class I region is not lost, so MHC-I-dependent flags stay possible |
+
+It then lists nine suggested designs. The first is an NKG2D-ligand flag (ULBP2).
+
+**2. Rank the vector options for suggestion 1 and see why.**
+
+```bash
+python -m cvd --cnv examples/tcga_chol_W5-AA2X-01.seg --build hg19 --design-from-cnv 1 \
+    --setting "in vivo" --rank --explain 1 --out example
+```
+
+| Rank | Score | Option | Cassette |
+|---|---|---|---|
+| 1 | 97 | AAV, tumor-selective promoter (Survivin) | 1,728 bp (37% of capacity) |
+| 2 | 92 | AAV, strong promoter (EF1a) | 2,636 bp |
+| 3 | 92 | AAV, compact promoter (EFS) | 1,081 bp |
+| 4 | 80 | Lentivirus, Survivin | 1,728 bp |
+| 5 | 75 | Lentivirus, EF1a | 2,636 bp |
+| 6 | 75 | Lentivirus, EFS | 1,081 bp |
+
+AAV wins for in vivo delivery because it does not integrate and suits direct injection. Survivin
+wins among the AAV layouts because an immune flag marks every cell that makes it, so restricting
+it to tumor cells matters most; it loses 3 expression points because the promoter is weak. The
+only modification applied is kanamycin selection for the plasmid. The short WPRE and the 49 bp
+polyA were considered and not used, and the explanation says why.
+
+**3. Build it.**
+
+```bash
+python -m cvd --cnv examples/tcga_chol_W5-AA2X-01.seg --build hg19 --design-from-cnv 1 \
+    --setting "in vivo" --rank --use-option 1 --out example
+```
+
+This writes `pAAV-Survivin_ULBP2` as GenBank, FASTA, a circular map and a summary. The summary
+records the aneuploidy analysis, the chosen design and the ranked option under *Design basis*.
+Suggestion 4 (CD47 knockdown) builds a companion vector the same way, with `--design-from-cnv 4`.
+
+**What this is not.** It is a computer design and nothing more. Every element shown as `N` is
+only the right length: the real ULBP2 sequence and a CD47 shRNA target still have to be added.
+Survivin is weak, so check that enough ULBP2 reaches the cell surface, and shed ligand can blunt
+the response. The vector cannot sense aneuploidy, and aneuploid cells occur in some normal tissues.
+Arm-level calls are a screen. Any real use needs biosafety approval, preclinical safety data and
+regulatory authorization.
 
 ---
 
@@ -474,6 +548,20 @@ Carried over deliberately rather than changed in the same pass as the split:
   share one table in the parts library.
 - Design-check messages are `(level, text)` tuples ordered by index into a literal tuple,
   with the level-to-label mapping repeated in the GUI, the terminal report and the summary.
+
+### Single-file runner
+
+`cvd.pyz` is the whole package in one runnable file (built with the standard library's
+`zipapp`; it still needs Python 3.8+ installed). On Linux and macOS run `./cvd.pyz`; anywhere
+run `python cvd.pyz`; on Windows `cvd.bat` calls it for you. It takes the same options as
+`python -m cvd`. Rebuild it with:
+
+```bash
+python -c "import zipapp; zipapp.create_archive('app', 'cvd.pyz', interpreter='/usr/bin/env python3', compressed=True)"
+```
+
+where `app/` holds a copy of the `cvd` folder and a `__main__.py` that calls `cvd.cli.run.main()`.
+It is not a native executable: that is what the next section builds.
 
 ### Building a stand-alone executable
 
